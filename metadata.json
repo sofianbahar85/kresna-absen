@@ -1,0 +1,5 @@
+{
+  "name": "Kresna Absen",
+  "description": "Sistem Absensi Karyawan Modern dengan Validasi Lokasi dan Rekap PDF Otomatis.",
+  "requestFramePermissions": ["geolocation"]
+}
