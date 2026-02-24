@@ -819,7 +819,7 @@ _Laporan lengkap tersedia dalam format PDF._`;
         </div>
 
         <div className="p-6 space-y-6">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <Card className="p-4 flex flex-col items-center justify-center gap-2 text-center cursor-pointer hover:bg-blue-50 transition-colors relative">
               <Upload className="text-blue-600" size={24} />
               <p className="text-xs font-bold text-gray-700">Import Excel</p>
@@ -843,6 +843,16 @@ _Laporan lengkap tersedia dalam format PDF._`;
             >
               <Database className="text-blue-600" size={24} />
               <p className="text-xs font-bold text-gray-700">Backup DB</p>
+            </Card>
+            <Card 
+              className="p-4 flex flex-col items-center justify-center gap-2 text-center cursor-pointer hover:bg-blue-50 transition-colors"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.origin);
+                alert('Link aplikasi berhasil disalin! Silakan bagikan ke WhatsApp karyawan.');
+              }}
+            >
+              <Share2 className="text-blue-600" size={24} />
+              <p className="text-xs font-bold text-gray-700">Salin Link</p>
             </Card>
           </div>
 

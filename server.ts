@@ -17,6 +17,12 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = path.join(dataDir, "kresna_absen.db");
 const db = new Database(dbPath);
 
+console.log(`-----------------------------------------`);
+console.log(`DATABASE STATUS:`);
+console.log(`Path: ${dbPath}`);
+console.log(`Persistent: ${dataDir.includes('/data') ? 'YES (Railway Volume)' : 'NO (Local Storage)'}`);
+console.log(`-----------------------------------------`);
+
 console.log(`Using database at: ${dbPath}`);
 
 const getLocalDate = () => {
