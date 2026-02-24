@@ -12,7 +12,9 @@ import {
   XCircle, 
   Shield,
   Download,
-  Share2
+  Share2,
+  Smartphone,
+  Database
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format } from 'date-fns';
@@ -29,6 +31,15 @@ function cn(...inputs: ClassValue[]) {
 }
 
 // --- Components ---
+
+const getDeviceId = () => {
+  let deviceId = localStorage.getItem('kresna_device_id');
+  if (!deviceId) {
+    deviceId = 'DEV-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('kresna_device_id', deviceId);
+  }
+  return deviceId;
+};
 
 const Button = ({ 
   children, 
@@ -71,6 +82,7 @@ const Card = ({ children, className, onClick }: { children: React.ReactNode; cla
 export default function App() {
   const [user, setUser] = useState<Employee | null>(null);
   const [view, setView] = useState<'login' | 'dashboard' | 'admin'>('login');
+  const [isInitializing, setIsInitializing] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [todayAttendance, setTodayAttendance] = useState<Attendance | null>(null);
@@ -79,16 +91,67 @@ export default function App() {
   const [distance, setDistance] = useState<number | null>(null);
 
   // Admin states
-  const [reportDate, setReportDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [reportDate, setReportDate] = useState(() => {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jayapura',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  });
   const [dailyReport, setDailyReport] = useState<DailyReportItem[]>([]);
+  const [dbStats, setDbStats] = useState<{ employeeCount: number; attendanceCount: number } | null>(null);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('kresna_user');
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser);
-      setUser(parsedUser);
-      setView(parsedUser.role === 'admin' ? 'admin' : 'dashboard');
+    try {
+      const savedUser = localStorage.getItem('kresna_user');
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        if (parsedUser && typeof parsedUser === 'object') {
+          setUser(parsedUser);
+          setView(parsedUser.role === 'admin' ? 'admin' : 'dashboard');
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load user from localStorage", e);
+      localStorage.removeItem('kresna_user');
+    } finally {
+      setIsInitializing(false);
     }
+  }, []);
+
+  useEffect(() => {
+    // Auto-restore data on startup if database is empty
+    const autoRestoreOnStartup = async () => {
+      try {
+        const res = await fetch('/api/admin/stats');
+        if (res.ok) {
+          const stats = await res.json();
+          setDbStats(stats);
+          // If only admin exists (count <= 1), try to restore from cache
+          if (stats.employeeCount <= 1) {
+            const cached = localStorage.getItem('kresna_employees_cache');
+            if (cached) {
+              console.log("Startup: Database empty, auto-restoring from browser cache...");
+              const employees = JSON.parse(cached);
+              await fetch('/api/admin/employees/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ employees }),
+              });
+              // Refresh stats after restore
+              const newRes = await fetch('/api/admin/stats');
+              const newStats = await newRes.json();
+              setDbStats(newStats);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Auto-restore check failed", e);
+      }
+    };
+
+    autoRestoreOnStartup();
   }, []);
 
   useEffect(() => {
@@ -99,6 +162,7 @@ export default function App() {
     }
     if (user && view === 'admin') {
       fetchDailyReport();
+      fetchDbStats();
     }
   }, [user, view, reportDate]);
 
@@ -129,8 +193,43 @@ export default function App() {
       const res = await fetch(`/api/admin/reports/daily?date=${reportDate}`);
       const data = await res.json();
       setDailyReport(data.report || []);
+      fetchDbStats();
     } catch (e) {
       console.error("Failed to fetch daily report", e);
+    }
+  };
+
+  const fetchDbStats = async () => {
+    try {
+      const res = await fetch('/api/admin/stats');
+      const data = await res.json();
+      setDbStats(data);
+    } catch (e) {
+      console.error("Failed to fetch stats", e);
+    }
+  };
+
+  const handleRestoreFromCache = async (silent = false) => {
+    const cached = localStorage.getItem('kresna_employees_cache');
+    if (!cached) return;
+    
+    try {
+      const employees = JSON.parse(cached);
+      if (!silent) setLoading(true);
+      const res = await fetch('/api/admin/employees/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employees }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (!silent) alert("Data karyawan berhasil dipulihkan dari cache browser.");
+        fetchDailyReport();
+      }
+    } catch (e) {
+      if (!silent) alert("Gagal memulihkan data.");
+    } finally {
+      if (!silent) setLoading(false);
     }
   };
 
@@ -179,12 +278,13 @@ export default function App() {
     setError(null);
     const formData = new FormData(e.currentTarget);
     const employeeId = formData.get('employeeId');
+    const deviceId = getDeviceId();
 
     try {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeId }),
+        body: JSON.stringify({ employeeId, deviceId }),
       });
       const data = await res.json();
 
@@ -210,6 +310,14 @@ export default function App() {
 
   const submitAttendance = async (status: string, notes: string = "") => {
     if (!user) return;
+    
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0 || day === 6) {
+      setError("Hari ini adalah hari libur (Sabtu/Minggu). Absensi tidak tersedia.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -264,6 +372,62 @@ export default function App() {
     }
   };
 
+  const handleAdminManualAttendance = async (employeeId: string, status: string) => {
+    if (user?.name !== 'SIGIT HARIYADI, S.I.K., M.H.') {
+      alert("Hanya SIGIT HARIYADI, S.I.K., M.H. yang dapat melakukan absen manual.");
+      return;
+    }
+    
+    if (!confirm(`Konfirmasi absen ${status} untuk karyawan ini?`)) return;
+    
+    setLoading(true);
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeId,
+          status,
+          notes: "Absen manual oleh Admin"
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchDailyReport();
+      } else {
+        alert(data.message);
+      }
+    } catch (err) {
+      alert("Gagal melakukan absen manual");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetDevice = async (employeeId: string, employeeName: string) => {
+    if (!confirm(`Reset perangkat untuk ${employeeName}? Karyawan ini akan bisa login dari HP baru.`)) return;
+    
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/reset-device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("Perangkat berhasil di-reset");
+        fetchDailyReport();
+      } else {
+        alert(data.message);
+      }
+    } catch (err) {
+      alert("Gagal me-reset perangkat");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -313,6 +477,7 @@ export default function App() {
         
         const result = await res.json();
         if (res.ok && result.success) {
+          localStorage.setItem('kresna_employees_cache', JSON.stringify(formattedEmployees));
           alert(`Berhasil mengimpor ${formattedEmployees.length} karyawan!`);
           fetchDailyReport();
         } else {
@@ -329,6 +494,12 @@ export default function App() {
   };
 
   const generatePDF = () => {
+    const reportDay = new Date(reportDate).getDay();
+    if (reportDay === 0 || reportDay === 6) {
+      alert("Tidak dapat membuat laporan untuk hari libur (Sabtu/Minggu).");
+      return;
+    }
+
     const doc = new jsPDF();
     
     doc.setFontSize(18);
@@ -346,6 +517,7 @@ export default function App() {
       kurang: dailyReport.filter(i => !i.status).length,
       sakit: dailyReport.filter(i => i.status === 'Sakit').length,
       dinas: dailyReport.filter(i => i.status === 'Dinas').length,
+      dinasLuar: dailyReport.filter(i => i.status === 'Dinas Luar').length,
       ijin: dailyReport.filter(i => i.status === 'Ijin').length,
       lepasDinas: dailyReport.filter(i => i.status === 'Lepas Dinas').length,
       cuti: dailyReport.filter(i => i.status === 'Cuti').length,
@@ -360,9 +532,11 @@ export default function App() {
     doc.text(`Keterangan Lainnya:`, 100, 45);
     doc.text(`- Sakit           : ${stats.sakit}`, 106, 52);
     doc.text(`- Dinas           : ${stats.dinas}`, 106, 58);
-    doc.text(`- Ijin            : ${stats.ijin}`, 106, 64);
-    doc.text(`- Lepas Dinas     : ${stats.lepasDinas}`, 106, 70);
-    doc.text(`- Cuti            : ${stats.cuti}`, 106, 76);
+    doc.text(`- Dinas Luar      : ${stats.dinasLuar}`, 106, 64);
+    doc.text(`- Ijin            : ${stats.ijin}`, 106, 70);
+    doc.text(`- Lepas Dinas     : ${stats.lepasDinas}`, 106, 76);
+    doc.text(`- Cuti            : ${stats.cuti}`, 106, 82);
+    doc.text(`- Tanpa Ket.      : ${stats.kurang}`, 106, 88);
 
     const tableData = dailyReport.map((item, index) => [
       index + 1,
@@ -375,7 +549,7 @@ export default function App() {
     ]);
 
     autoTable(doc, {
-      startY: 85,
+      startY: 90,
       head: [['No', 'ID', 'Nama', 'Unit', 'Status', 'Waktu', 'Ket']],
       body: tableData,
       theme: 'grid',
@@ -385,13 +559,42 @@ export default function App() {
     const fileName = `Rekap_Absen_${reportDate}.pdf`;
     doc.save(fileName);
 
-    const whatsappUrl = `https://wa.me/?text=Laporan Rekap Absensi Kresna Absen Tanggal ${reportDate}`;
+    const message = `*REKAP ABSENSI KRESNA ABSEN*
+Tanggal: ${reportDate}
+
+*Ringkasan:*
+- Total Karyawan: ${stats.total}
+- Hadir: ${stats.hadir}
+- Kurang Keterangan (Belum Absen): ${stats.kurang}
+
+*Keterangan Lainnya:*
+- Sakit: ${stats.sakit}
+- Ijin: ${stats.ijin}
+- Dinas: ${stats.dinas}
+- Dinas Luar: ${stats.dinasLuar}
+- Lepas Dinas: ${stats.lepasDinas}
+- Cuti: ${stats.cuti}
+
+_Laporan lengkap tersedia dalam format PDF._`;
+
+    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
   };
 
   // --- Views ---
 
-  if (view === 'login') {
+  if (isInitializing) {
+    return (
+      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
+        <div className="text-white flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+          <p className="text-sm font-medium">Memuat Aplikasi...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'login' || !user) {
     return (
       <div className="min-h-screen bg-blue-900 flex items-center justify-center p-6">
         <motion.div 
@@ -463,7 +666,12 @@ export default function App() {
                 </div>
                 <div>
                   <p className="text-xs text-blue-200">Hari Ini</p>
-                  <p className="font-semibold">{format(new Date(), 'EEEE, dd MMM yyyy')}</p>
+                  <p className="font-semibold">
+                    {new Intl.DateTimeFormat('id-ID', { 
+                      timeZone: 'Asia/Jayapura', 
+                      dateStyle: 'full' 
+                    }).format(new Date())}
+                  </p>
                 </div>
               </div>
               <div className="text-right">
@@ -591,10 +799,27 @@ export default function App() {
               <LogOut size={20} />
             </button>
           </div>
+          
+          {dbStats && (
+            <div className="flex flex-wrap gap-2 mt-4 text-[10px]">
+              <div className="bg-white/10 px-3 py-1 rounded-full text-blue-100">
+                Total Karyawan: <span className="font-bold text-white">{dbStats.employeeCount}</span>
+              </div>
+              <div className="bg-white/10 px-3 py-1 rounded-full text-blue-100">
+                Total Absensi: <span className="font-bold text-white">{dbStats.attendanceCount}</span>
+              </div>
+              {localStorage.getItem('kresna_employees_cache') && (
+                <div className="bg-green-500/20 px-3 py-1 rounded-full text-green-200 flex items-center gap-1">
+                  <CheckCircle size={10} />
+                  <span>Data Tersimpan di Browser</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <Card className="p-4 flex flex-col items-center justify-center gap-2 text-center cursor-pointer hover:bg-blue-50 transition-colors relative">
               <Upload className="text-blue-600" size={24} />
               <p className="text-xs font-bold text-gray-700">Import Excel</p>
@@ -612,11 +837,27 @@ export default function App() {
               <Download className="text-blue-600" size={24} />
               <p className="text-xs font-bold text-gray-700">Download PDF</p>
             </Card>
+            <Card 
+              className="p-4 flex flex-col items-center justify-center gap-2 text-center cursor-pointer hover:bg-blue-50 transition-colors"
+              onClick={() => window.open('/api/admin/backup', '_blank')}
+            >
+              <Database className="text-blue-600" size={24} />
+              <p className="text-xs font-bold text-gray-700">Backup DB</p>
+            </Card>
           </div>
 
           <Card className="p-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-800">Rekap Harian</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800">Rekap Harian</h3>
+                <button 
+                  onClick={fetchDailyReport}
+                  className="p-1 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="Refresh Data"
+                >
+                  <Share2 size={14} className="rotate-180" />
+                </button>
+              </div>
               <input 
                 type="date" 
                 value={reportDate}
@@ -626,39 +867,108 @@ export default function App() {
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b text-gray-400">
-                    <th className="pb-2 font-medium">Nama</th>
-                    <th className="pb-2 font-medium">Unit</th>
-                    <th className="pb-2 font-medium">Status</th>
-                    <th className="pb-2 font-medium">Waktu</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {dailyReport.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50">
-                      <td className="py-3 font-bold text-gray-800">{item.name}</td>
-                      <td className="py-3 text-gray-500">{item.department}</td>
-                      <td className="py-3">
-                        <span className={cn(
-                          "px-2 py-0.5 rounded-full text-[10px] font-bold",
-                          item.status === 'Hadir' ? "bg-green-100 text-green-700" : 
-                          item.status ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
-                        )}>
-                          {item.status || 'Belum Absen'}
-                        </span>
-                      </td>
-                      <td className="py-3 text-gray-600">{item.time || '-'}</td>
+              {(new Date(reportDate).getDay() === 0 || new Date(reportDate).getDay() === 6) ? (
+                <div className="py-12 text-center">
+                  <Calendar className="mx-auto text-gray-300 mb-2" size={48} />
+                  <p className="text-gray-500 font-medium">Hari Libur (Sabtu/Minggu)</p>
+                  <p className="text-gray-400 text-xs">Tidak ada jadwal kerja pada hari ini.</p>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b text-gray-400">
+                      <th className="pb-2 font-medium">Nama</th>
+                      <th className="pb-2 font-medium">Unit</th>
+                      <th className="pb-2 font-medium">Status</th>
+                      <th className="pb-2 font-medium">Waktu</th>
+                      {user?.name === 'SIGIT HARIYADI, S.I.K., M.H.' && <th className="pb-2 font-medium text-right">Aksi</th>}
                     </tr>
-                  ))}
-                  {dailyReport.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-400">Tidak ada data karyawan</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y">
+                    {dailyReport.map((item) => {
+                      const todayStr = new Intl.DateTimeFormat('en-CA', {
+                        timeZone: 'Asia/Jayapura',
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                      }).format(new Date());
+
+                      return (
+                        <tr key={item.id} className="hover:bg-gray-50">
+                          <td className="py-3 font-bold text-gray-800">{item.name}</td>
+                          <td className="py-3 text-gray-500">{item.department}</td>
+                          <td className="py-3">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-bold",
+                              item.status === 'Hadir' ? "bg-green-100 text-green-700" : 
+                              item.status ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+                            )}>
+                              {item.status || 'Belum Absen'}
+                            </span>
+                          </td>
+                          <td className="py-3 text-gray-600">{item.time || '-'}</td>
+                          {user?.name === 'SIGIT HARIYADI, S.I.K., M.H.' && (
+                            <td className="py-3 text-right">
+                              <div className="flex justify-end gap-1">
+                                {item.device_id && (
+                                  <button 
+                                    onClick={() => handleResetDevice(item.id, item.name)}
+                                    className="p-1 bg-red-50 text-red-600 rounded hover:bg-red-100"
+                                    title="Reset Perangkat"
+                                  >
+                                    <Smartphone size={14} />
+                                  </button>
+                                )}
+                                {!item.status && reportDate === todayStr && (
+                                  <>
+                                    <button 
+                                      onClick={() => handleAdminManualAttendance(item.id, 'Hadir')}
+                                      className="p-1 bg-green-50 text-green-600 rounded hover:bg-green-100"
+                                      title="Absen Hadir"
+                                    >
+                                      <CheckCircle size={14} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        const reason = prompt("Masukkan alasan (Sakit/Ijin/Dinas/Cuti):", "Ijin");
+                                        if (reason) handleAdminManualAttendance(item.id, reason);
+                                      }}
+                                      className="p-1 bg-amber-50 text-amber-600 rounded hover:bg-amber-100"
+                                      title="Absen Lainnya"
+                                    >
+                                      <FileText size={14} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                    {dailyReport.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center">
+                          <Upload className="mx-auto text-gray-300 mb-2" size={32} />
+                          <p className="text-gray-500 font-medium">Data Karyawan Kosong</p>
+                          <p className="text-gray-400 text-[10px] max-w-[200px] mx-auto mb-4">Silakan import daftar karyawan melalui tombol "Import Excel" di atas.</p>
+                          
+                          {localStorage.getItem('kresna_employees_cache') && (
+                            <Button 
+                              variant="outline" 
+                              className="text-[10px] py-1 px-3 mx-auto"
+                              onClick={handleRestoreFromCache}
+                              disabled={loading}
+                            >
+                              Pulihkan dari Cache Browser
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
           </Card>
 
@@ -671,5 +981,15 @@ export default function App() {
     );
   }
 
-  return null;
+  // Fallback to login if something goes wrong
+  return (
+    <div className="min-h-screen bg-blue-900 flex items-center justify-center p-6">
+      <div className="text-white text-center">
+        <p>Terjadi kesalahan saat memuat halaman.</p>
+        <Button onClick={() => setView('login')} className="mt-4 bg-white text-blue-900">
+          Kembali ke Login
+        </Button>
+      </div>
+    </div>
+  );
 }

@@ -4,6 +4,7 @@ export interface Employee {
   position: string;
   department: string;
   role: 'admin' | 'employee';
+  device_id?: string | null;
 }
 
 export interface Attendance {
@@ -24,4 +25,5 @@ export interface DailyReportItem {
   time: string | null;
   status: string | null;
   notes: string | null;
+  device_id?: string | null;
 }

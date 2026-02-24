@@ -20,6 +20,7 @@ export const ABSENCE_REASONS = [
   "Sakit",
   "Ijin",
   "Dinas",
+  "Dinas Luar",
   "Lepas Dinas",
   "Cuti",
 ];

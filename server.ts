@@ -8,7 +8,35 @@ import fs from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("kresna_absen.db");
+// Use /data folder for persistent storage on Railway, fallback to local __dirname
+const dataDir = process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, "data");
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+const dbPath = path.join(dataDir, "kresna_absen.db");
+const db = new Database(dbPath);
+
+console.log(`Using database at: ${dbPath}`);
+
+const getLocalDate = () => {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jayapura',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+};
+
+const getLocalTime = () => {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jayapura',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(new Date());
+};
 
 // Initialize Database
 db.exec(`
@@ -17,7 +45,8 @@ db.exec(`
     name TEXT NOT NULL,
     position TEXT,
     department TEXT,
-    role TEXT DEFAULT 'employee'
+    role TEXT DEFAULT 'employee',
+    device_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS attendance (
@@ -38,13 +67,29 @@ db.exec(`
   );
 `);
 
-// Insert default admin if not exists
-const adminExists = db.prepare("SELECT * FROM employees WHERE role = 'admin'").get();
-if (!adminExists) {
+// Ensure device_id column exists for existing databases
+try {
+  db.exec("ALTER TABLE employees ADD COLUMN device_id TEXT");
+} catch (e) {
+  // Column already exists or other error
+}
+
+// Insert or update default admin
+
+// Insert or update default admin
+const admin = db.prepare("SELECT * FROM employees WHERE id = 'ADMIN123'").get();
+if (!admin) {
   db.prepare("INSERT INTO employees (id, name, position, department, role) VALUES (?, ?, ?, ?, ?)").run(
-    "ADMIN123", "Administrator", "IT Manager", "IT", "admin"
+    "ADMIN123", "SIGIT HARIYADI, S.I.K., M.H.", "Admin Utama", "Pimpinan", "admin"
+  );
+} else if (admin.role === 'admin') {
+  db.prepare("UPDATE employees SET name = ?, position = ?, department = ? WHERE id = 'ADMIN123'").run(
+    "SIGIT HARIYADI, S.I.K., M.H.", "Admin Utama", "Pimpinan"
   );
 }
+
+const employeeCount = db.prepare("SELECT COUNT(*) as count FROM employees").get() as { count: number };
+console.log(`Database initialized. Total employees: ${employeeCount.count}`);
 
 async function startServer() {
   const app = express();
@@ -52,18 +97,52 @@ async function startServer() {
 
   // API Routes
   app.post("/api/login", (req, res) => {
+    const { employeeId, deviceId } = req.body;
+    const employee = db.prepare("SELECT * FROM employees WHERE id = ?").get(employeeId) as any;
+    
+    if (!employee) {
+      return res.status(401).json({ success: false, message: "ID Karyawan tidak terdaftar" });
+    }
+
+    // Admin bypass device check
+    if (employee.role === 'admin') {
+      return res.json({ success: true, employee });
+    }
+
+    if (!deviceId) {
+      return res.status(400).json({ success: false, message: "Device ID diperlukan" });
+    }
+
+    // Device binding logic
+    if (!employee.device_id) {
+      // First time login, bind device
+      db.prepare("UPDATE employees SET device_id = ? WHERE id = ?").run(deviceId, employeeId);
+      employee.device_id = deviceId;
+      return res.json({ success: true, employee, message: "Perangkat berhasil didaftarkan" });
+    } else if (employee.device_id !== deviceId) {
+      // Device mismatch
+      return res.status(403).json({ 
+        success: false, 
+        message: "ID ini sudah terdaftar di HP lain. Silakan hubungi Admin untuk reset perangkat." 
+      });
+    }
+
+    res.json({ success: true, employee });
+  });
+
+  app.post("/api/admin/reset-device", (req, res) => {
     const { employeeId } = req.body;
-    const employee = db.prepare("SELECT * FROM employees WHERE id = ?").get(employeeId);
-    if (employee) {
-      res.json({ success: true, employee });
-    } else {
-      res.status(401).json({ success: false, message: "ID Karyawan tidak terdaftar" });
+    try {
+      db.prepare("UPDATE employees SET device_id = NULL WHERE id = ?").run(employeeId);
+      res.json({ success: true, message: "Perangkat berhasil di-reset" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: "Gagal me-reset perangkat" });
     }
   });
 
   app.get("/api/attendance/today/:employeeId", (req, res) => {
     const { employeeId } = req.params;
-    const today = new Date().toISOString().split("T")[0];
+    const today = getLocalDate();
     const attendance = db.prepare("SELECT * FROM attendance WHERE employee_id = ? AND date = ?").get(employeeId, today);
     res.json({ attendance });
   });
@@ -81,9 +160,8 @@ async function startServer() {
 
   app.post("/api/attendance", (req, res) => {
     const { employeeId, status, lat, lng, notes } = req.body;
-    const today = new Date().toISOString().split("T")[0];
-    const now = new Date();
-    const time = now.toLocaleTimeString("en-GB", { hour12: false });
+    const today = getLocalDate();
+    const time = getLocalTime();
 
     // Check if already attended today
     const existing = db.prepare("SELECT * FROM attendance WHERE employee_id = ? AND date = ?").get(employeeId, today);
@@ -130,14 +208,50 @@ async function startServer() {
   });
 
   app.get("/api/admin/reports/daily", (req, res) => {
-    const date = req.query.date || new Date().toISOString().split("T")[0];
+    const date = req.query.date || getLocalDate();
     const report = db.prepare(`
-      SELECT e.id, e.name, e.department, a.time, a.status, a.notes
+      SELECT e.id, e.name, e.department, e.device_id, a.time, a.status, a.notes
       FROM employees e
       LEFT JOIN attendance a ON e.id = a.employee_id AND a.date = ?
       WHERE e.role != 'admin'
     `).all(date);
     res.json({ report });
+  });
+
+  app.get("/api/admin/reports/all", (req, res) => {
+    try {
+      const report = db.prepare(`
+        SELECT a.date, a.time, e.id as employee_id, e.name, e.position, e.department, a.status, a.notes
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        ORDER BY a.date DESC, a.time DESC
+      `).all();
+      res.json({ report });
+    } catch (error) {
+      res.status(500).json({ success: false });
+    }
+  });
+
+  app.get("/api/admin/stats", (req, res) => {
+    try {
+      const empCount = db.prepare("SELECT COUNT(*) as count FROM employees").get() as { count: number };
+      const attCount = db.prepare("SELECT COUNT(*) as count FROM attendance").get() as { count: number };
+      res.json({ 
+        employeeCount: empCount.count, 
+        attendanceCount: attCount.count,
+        dbPath: dbPath
+      });
+    } catch (error) {
+      res.status(500).json({ success: false });
+    }
+  });
+
+  app.get("/api/admin/backup", (req, res) => {
+    if (fs.existsSync(dbPath)) {
+      res.download(dbPath, `backup_absen_${getLocalDate()}.db`);
+    } else {
+      res.status(404).json({ success: false, message: "File database tidak ditemukan" });
+    }
   });
 
   // Vite middleware for development
@@ -154,9 +268,9 @@ async function startServer() {
     });
   }
 
-  const PORT = 3000;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const PORT = process.env.PORT || 3000;
+  app.listen(Number(PORT), "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
