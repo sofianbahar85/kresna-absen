@@ -514,20 +514,22 @@ export default function App() {
     const stats = {
       total: dailyReport.length,
       hadir: dailyReport.filter(i => i.status === 'Hadir').length,
-      kurang: dailyReport.filter(i => !i.status).length,
       sakit: dailyReport.filter(i => i.status === 'Sakit').length,
+      ijin: dailyReport.filter(i => i.status === 'Ijin').length,
       dinas: dailyReport.filter(i => i.status === 'Dinas').length,
       dinasLuar: dailyReport.filter(i => i.status === 'Dinas Luar').length,
-      ijin: dailyReport.filter(i => i.status === 'Ijin').length,
       lepasDinas: dailyReport.filter(i => i.status === 'Lepas Dinas').length,
       cuti: dailyReport.filter(i => i.status === 'Cuti').length,
+      belumAbsen: dailyReport.filter(i => !i.status).length,
     };
+
+    const kurang = stats.belumAbsen + stats.sakit + stats.ijin + stats.dinas + stats.dinasLuar + stats.lepasDinas + stats.cuti;
 
     doc.setFontSize(10);
     doc.text(`Ringkasan Kehadiran:`, 14, 45);
     doc.text(`- Jumlah Karyawan : ${stats.total}`, 20, 52);
     doc.text(`- Hadir           : ${stats.hadir}`, 20, 58);
-    doc.text(`- Kurang (Belum)  : ${stats.kurang}`, 20, 64);
+    doc.text(`- Kurang          : ${kurang}`, 20, 64);
 
     doc.text(`Keterangan Lainnya:`, 100, 45);
     doc.text(`- Sakit           : ${stats.sakit}`, 106, 52);
@@ -536,7 +538,7 @@ export default function App() {
     doc.text(`- Ijin            : ${stats.ijin}`, 106, 70);
     doc.text(`- Lepas Dinas     : ${stats.lepasDinas}`, 106, 76);
     doc.text(`- Cuti            : ${stats.cuti}`, 106, 82);
-    doc.text(`- Tanpa Ket.      : ${stats.kurang}`, 106, 88);
+    doc.text(`- Tanpa Ket.      : ${stats.belumAbsen}`, 106, 88);
 
     const tableData = dailyReport.map((item, index) => [
       index + 1,
@@ -565,7 +567,7 @@ Tanggal: ${reportDate}
 *Ringkasan:*
 - Total Karyawan: ${stats.total}
 - Hadir: ${stats.hadir}
-- Kurang Keterangan (Belum Absen): ${stats.kurang}
+- Kurang: ${kurang}
 
 *Keterangan Lainnya:*
 - Sakit: ${stats.sakit}
@@ -574,6 +576,7 @@ Tanggal: ${reportDate}
 - Dinas Luar: ${stats.dinasLuar}
 - Lepas Dinas: ${stats.lepasDinas}
 - Cuti: ${stats.cuti}
+- Tanpa Keterangan (Belum Absen): ${stats.belumAbsen}
 
 _Laporan lengkap tersedia dalam format PDF._`;
 
@@ -785,6 +788,21 @@ _Laporan lengkap tersedia dalam format PDF._`;
   }
 
   if (view === 'admin' && user) {
+    const stats = {
+      total: dailyReport.length,
+      hadir: dailyReport.filter(i => i.status === 'Hadir').length,
+      sakit: dailyReport.filter(i => i.status === 'Sakit').length,
+      ijin: dailyReport.filter(i => i.status === 'Ijin').length,
+      dinas: dailyReport.filter(i => i.status === 'Dinas').length,
+      dinasLuar: dailyReport.filter(i => i.status === 'Dinas Luar').length,
+      lepasDinas: dailyReport.filter(i => i.status === 'Lepas Dinas').length,
+      cuti: dailyReport.filter(i => i.status === 'Cuti').length,
+      belumAbsen: dailyReport.filter(i => !i.status).length,
+    };
+
+    const kurang = stats.belumAbsen + stats.sakit + stats.ijin + stats.dinas + stats.dinasLuar + stats.lepasDinas + stats.cuti;
+    const belumAbsenNames = dailyReport.filter(i => !i.status).map(i => i.name);
+
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-blue-900 text-white p-6">
@@ -855,6 +873,70 @@ _Laporan lengkap tersedia dalam format PDF._`;
               <p className="text-xs font-bold text-gray-700">Salin Link</p>
             </Card>
           </div>
+
+          {/* Ringkasan Absen */}
+          <Card className="p-6 space-y-4">
+            <h3 className="font-bold text-gray-800 border-b pb-2">Ringkasan Absen</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                <p className="text-xs text-blue-600 font-bold uppercase tracking-wider">Jumlah Karyawan</p>
+                <p className="text-3xl font-black text-blue-900">{stats.total} <span className="text-sm font-normal">Orang</span></p>
+              </div>
+              <div className="bg-green-50 p-4 rounded-xl border border-green-100">
+                <p className="text-xs text-green-600 font-bold uppercase tracking-wider">Hadir</p>
+                <p className="text-3xl font-black text-green-900">{stats.hadir} <span className="text-sm font-normal">Orang</span></p>
+              </div>
+              <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                <p className="text-xs text-red-600 font-bold uppercase tracking-wider">Kurang</p>
+                <p className="text-3xl font-black text-red-900">{kurang} <span className="text-sm font-normal">Orang</span></p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 pt-2">
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Sakit</p>
+                <p className="text-lg font-bold text-gray-800">{stats.sakit}</p>
+              </div>
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Ijin</p>
+                <p className="text-lg font-bold text-gray-800">{stats.ijin}</p>
+              </div>
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Dinas</p>
+                <p className="text-lg font-bold text-gray-800">{stats.dinas}</p>
+              </div>
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Dinas Luar</p>
+                <p className="text-lg font-bold text-gray-800">{stats.dinasLuar}</p>
+              </div>
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Lepas Dinas</p>
+                <p className="text-lg font-bold text-gray-800">{stats.lepasDinas}</p>
+              </div>
+              <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-center">
+                <p className="text-[10px] text-gray-500 font-bold uppercase">Cuti</p>
+                <p className="text-lg font-bold text-gray-800">{stats.cuti}</p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 mt-4">
+              <div className="flex justify-between items-center mb-2">
+                <p className="text-xs text-amber-700 font-bold uppercase tracking-wider">Tanpa Keterangan (Belum Absen)</p>
+                <span className="bg-amber-200 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{stats.belumAbsen} Orang</span>
+              </div>
+              {belumAbsenNames.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {belumAbsenNames.map((name, idx) => (
+                    <span key={idx} className="text-[10px] bg-white px-2 py-1 rounded border border-amber-100 text-amber-800">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[10px] text-amber-600 italic">Semua karyawan sudah melakukan absensi.</p>
+              )}
+            </div>
+          </Card>
 
           <Card className="p-4">
             <div className="flex items-center justify-between mb-4">
