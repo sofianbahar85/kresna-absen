@@ -640,6 +640,9 @@ _Laporan lengkap tersedia dalam format PDF._`;
               {!loading && <LogIn size={20} />}
             </Button>
           </form>
+          <footer className="pb-6 text-center text-[10px] text-gray-400 opacity-60">
+            hak cipta BS 2448
+          </footer>
         </motion.div>
       </div>
     );
@@ -783,6 +786,9 @@ _Laporan lengkap tersedia dalam format PDF._`;
             </div>
           </div>
         </div>
+        <footer className="py-6 text-center text-[10px] text-gray-400 opacity-60">
+          hak cipta BS 2448
+        </footer>
       </div>
     );
   }
@@ -1068,6 +1074,9 @@ _Laporan lengkap tersedia dalam format PDF._`;
             <Share2 size={18} />
             Bagikan ke WhatsApp
           </Button>
+          <footer className="py-8 text-center text-[10px] text-gray-400 opacity-60">
+            hak cipta BS 2448
+          </footer>
         </div>
       </div>
     );
