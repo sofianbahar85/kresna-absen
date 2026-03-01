@@ -260,6 +260,12 @@ async function startServer() {
     }
   });
 
+  // Version API for auto-update check
+  const APP_VERSION = "20260301-0218"; // Update this whenever you want to force a refresh
+  app.get("/api/version", (req, res) => {
+    res.json({ version: APP_VERSION });
+  });
+
   // Vite middleware for development (only if explicitly set to development)
   if (process.env.NODE_ENV === "development") {
     const vite = await createViteServer({
@@ -269,8 +275,16 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     // Default to production mode
-    app.use(express.static(path.join(__dirname, "dist")));
+    app.use(express.static(path.join(__dirname, "dist"), {
+      maxAge: '1d', // Cache static assets for 1 day
+      index: false
+    }));
+    
     app.get("*", (req, res) => {
+      // Never cache index.html to ensure auto-update works
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }

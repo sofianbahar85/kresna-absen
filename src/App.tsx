@@ -103,6 +103,43 @@ export default function App() {
   const [dbStats, setDbStats] = useState<{ employeeCount: number; attendanceCount: number } | null>(null);
 
   useEffect(() => {
+    // Auto-update check
+    let currentVersion: string | null = null;
+    
+    const checkVersion = async () => {
+      try {
+        const res = await fetch('/api/version');
+        if (res.ok) {
+          const data = await res.json();
+          if (currentVersion && data.version !== currentVersion) {
+            console.log("New version detected, reloading...");
+            window.location.reload();
+          }
+          currentVersion = data.version;
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    };
+
+    checkVersion();
+    const interval = setInterval(checkVersion, 300000); // Check every 5 minutes
+    
+    // Also check when user returns to the app
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkVersion();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const savedUser = localStorage.getItem('kresna_user');
       if (savedUser) {
